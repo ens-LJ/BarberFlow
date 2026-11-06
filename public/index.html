@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BarberFlow</title>
+<style>
+  :root { --bg:#14110f; --card:#1f1b18; --txt:#f3ece4; --mut:#a89c90; --acc:#d9a441; --ok:#5cb85c; --err:#e5645c; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,sans-serif; background:var(--bg); color:var(--txt); }
+  header { padding:24px 16px; text-align:center; border-bottom:1px solid #2c2622; }
+  header h1 { margin:0; color:var(--acc); letter-spacing:1px; }
+  main { max-width:760px; margin:0 auto; padding:16px; display:grid; gap:16px; }
+  section { background:var(--card); border-radius:12px; padding:16px; }
+  h2 { margin:0 0 12px; font-size:1.05rem; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; }
+  input,select,button { width:100%; padding:10px; border-radius:8px; border:1px solid #3a322c; background:#14110f; color:var(--txt); font:inherit; }
+  label { font-size:.8rem; color:var(--mut); display:block; margin-bottom:4px; }
+  button { background:var(--acc); color:#14110f; border:0; font-weight:600; cursor:pointer; }
+  button.sec { background:transparent; color:var(--acc); border:1px solid var(--acc); }
+  .slots { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+  .slots button { width:auto; padding:8px 14px; background:transparent; color:var(--txt); border:1px solid #3a322c; }
+  .slots button.on { background:var(--acc); color:#14110f; border-color:var(--acc); }
+  .row { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid #2c2622; font-size:.9rem; }
+  .row button { width:auto; padding:6px 12px; }
+  #msg { position:sticky; top:0; padding:10px; border-radius:8px; display:none; text-align:center; }
+  .hint { color:var(--mut); font-size:.85rem; }
+</style>
+</head>
+<body>
+<header><h1>✂ BarberFlow</h1><div class="hint">Agende seu horário sem trocar mensagens</div></header>
+<main>
+  <div id="msg"></div>
+
+  <section>
+    <h2>1. Seus dados</h2>
+    <div class="grid">
+      <div><label>Nome</label><input id="nome"></div>
+      <div><label>Telefone (com DDD)</label><input id="telefone" inputmode="tel"></div>
+      <div><label>E-mail</label><input id="email" type="email"></div>
+      <div><label>CEP</label><input id="cep" maxlength="9" inputmode="numeric" placeholder="00000-000"></div>
+      <div><label>Rua</label><input id="logradouro"></div>
+      <div><label>Número</label><input id="numero"></div>
+      <div><label>Bairro</label><input id="bairro"></div>
+      <div><label>Cidade</label><input id="cidade"></div>
+      <div><label>UF</label><input id="uf" maxlength="2"></div>
+    </div>
+    <p class="hint">Digite o CEP e o endereço é preenchido automaticamente (ViaCEP).</p>
+    <button id="salvar">Salvar cadastro</button>
+  </section>
+
+  <section>
+    <h2>2. Agendar</h2>
+    <div class="grid">
+      <div><label>Serviço</label><select id="servico"></select></div>
+      <div><label>Profissional</label><select id="profissional"></select></div>
+      <div><label>Data</label><input id="data" type="date"></div>
+    </div>
+    <div class="slots" id="slots"></div>
+    <div id="espera" style="display:none;margin-top:12px">
+      <p class="hint">Sem horários livres nesse dia.</p>
+      <button class="sec" id="entrarEspera">Entrar na lista de espera</button>
+    </div>
+    <div style="margin-top:12px"><button id="agendar" disabled>Confirmar agendamento</button></div>
+  </section>
+
+  <section><h2>Meus agendamentos</h2><div id="meus"><span class="hint">Salve seu cadastro para ver.</span></div></section>
+  <section><h2>Painel da barbearia — mensagens enviadas</h2><div id="msgs"></div></section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+let cliente = JSON.parse(localStorage.getItem('bf_cliente') || 'null');
+let hora = null;
+
+async function api(url, opts) {
+  const r = await fetch(url, opts && { method: opts.method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(opts.body) });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.erro || 'Erro inesperado');
+  return j;
+}
+function aviso(t, ok = true) {
+  const m = $('#msg'); m.textContent = t; m.style.display = 'block';
+  m.style.background = ok ? 'var(--ok)' : 'var(--err)'; m.style.color = '#fff';
+  setTimeout(() => m.style.display = 'none', 4000);
+}
+const campos = ['nome','telefone','email','cep','logradouro','numero','bairro','cidade','uf'];
+
+// ViaCEP
+$('#cep').addEventListener('input', e => {
+  let v = e.target.value.replace(/\D/g, '').slice(0, 8);
+  e.target.value = v.length > 5 ? v.slice(0, 5) + '-' + v.slice(5) : v;
+  if (v.length === 8) buscarCep(v);
+});
+async function buscarCep(v) {
+  try {
+    const d = await api('/api/cep/' + v);
+    ['logradouro','bairro','cidade','uf'].forEach(k => $('#' + k).value = d[k] || '');
+    $('#numero').focus();
+  } catch (e) { aviso(e.message, false); }
+}
+
+$('#salvar').onclick = async () => {
+  const body = Object.fromEntries(campos.map(k => [k, $('#' + k).value.trim()]));
+  try {
+    cliente = await api('/api/clientes', { method: 'POST', body });
+    localStorage.setItem('bf_cliente', JSON.stringify(cliente));
+    aviso('Cadastro salvo!'); carregarMeus();
+  } catch (e) { aviso(e.message, false); }
+};
+
+async function init() {
+  const cat = await api('/api/catalogo');
+  $('#servico').innerHTML = cat.servicos.map(s => `<option value="${s.id}">${s.nome} — ${s.duracao_min}min · R$ ${s.preco.toFixed(2)}</option>`).join('');
+  $('#profissional').innerHTML = cat.profissionais.map(p => `<option value="${p.id}">${p.nome}</option>`).join('');
+  const hoje = new Date(); hoje.setMinutes(hoje.getMinutes() - hoje.getTimezoneOffset());
+  $('#data').min = $('#data').value = hoje.toISOString().slice(0, 10);
+  if (cliente) campos.forEach(k => $('#' + k).value = cliente[k] || '');
+  ['servico','profissional','data'].forEach(id => $('#' + id).onchange = slots);
+  slots(); carregarMeus(); carregarMsgs();
+}
+
+async function slots() {
+  hora = null; $('#agendar').disabled = true;
+  const q = new URLSearchParams({ profissional_id: $('#profissional').value, servico_id: $('#servico').value, data: $('#data').value });
+  const lista = await api('/api/disponibilidade?' + q);
+  $('#slots').innerHTML = lista.map(h => `<button data-h="${h}">${h}</button>`).join('');
+  $('#espera').style.display = lista.length ? 'none' : 'block';
+  document.querySelectorAll('#slots button').forEach(b => b.onclick = () => {
+    document.querySelectorAll('#slots button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on'); hora = b.dataset.h; $('#agendar').disabled = false;
+  });
+}
+
+$('#agendar').onclick = async () => {
+  if (!cliente) return aviso('Salve seu cadastro primeiro.', false);
+  try {
+    await api('/api/agendamentos', { method: 'POST', body: {
+      cliente_id: cliente.id, profissional_id: +$('#profissional').value,
+      servico_id: +$('#servico').value, data: $('#data').value, hora } });
+    aviso('Agendado! Confirmação enviada.'); slots(); carregarMeus(); carregarMsgs();
+  } catch (e) { aviso(e.message, false); slots(); }
+};
+
+$('#entrarEspera').onclick = async () => {
+  if (!cliente) return aviso('Salve seu cadastro primeiro.', false);
+  try {
+    await api('/api/espera', { method: 'POST', body: {
+      cliente_id: cliente.id, profissional_id: +$('#profissional').value,
+      servico_id: +$('#servico').value, data: $('#data').value } });
+    aviso('Você está na lista de espera. Avisaremos se vagar.');
+  } catch (e) { aviso(e.message, false); }
+};
+
+async function carregarMeus() {
+  if (!cliente) return;
+  const l = await api(`/api/clientes/${cliente.id}/agendamentos`);
+  $('#meus').innerHTML = l.length ? l.map(a => `<div class="row"><span>${a.inicio.slice(8,10)}/${a.inicio.slice(5,7)} ${a.inicio.slice(11)} · ${a.servico} · ${a.profissional}</span><button class="sec" data-id="${a.id}">Cancelar</button></div>`).join('') : '<span class="hint">Nenhum agendamento.</span>';
+  document.querySelectorAll('#meus button').forEach(b => b.onclick = async () => {
+    await api('/api/agendamentos/' + b.dataset.id, { method: 'DELETE' });
+    aviso('Agendamento cancelado.'); carregarMeus(); carregarMsgs(); slots();
+  });
+}
+async function carregarMsgs() {
+  const l = await api('/api/admin/mensagens');
+  $('#msgs').innerHTML = l.map(m => `<div class="row"><span><b>${m.tipo}</b> → ${m.cliente}<br><span class="hint">${m.conteudo}</span></span></div>`).join('') || '<span class="hint">Sem mensagens.</span>';
+}
+init();
+setInterval(carregarMsgs, 15000);
+</script>
+</body>
+</html>
