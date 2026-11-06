@@ -11,13 +11,20 @@ const q = (sql, p) => pool.query(sql, p).then(r => r.rows);
 const q1 = async (sql, p) => (await q(sql, p))[0];
 
 // ---------- utilitários ----------
-const ABRE = 9 * 60, FECHA = 19 * 60, PASSO = 30; // 09:00–19:00, grade de 30 min
+const ABRE = 9 * 60, FECHA = 22 * 60, PASSO = 30; // 09:00–22:00, grade de 30 min
 const pad = n => String(n).padStart(2, '0');
 const toMin = hhmm => { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; };
 const fmt = min => `${pad(Math.floor(min / 60))}:${pad(min % 60)}`;
 const parse = s => new Date(s.replace(' ', 'T'));
 const br = s => `${s.slice(8, 10)}/${s.slice(5, 7)} às ${s.slice(11)}`;
-const stamp = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+// 'agora' no fuso da loja, no formato 'YYYY-MM-DD HH:MM' (não depende do fuso do servidor)
+const TZ_LOJA = process.env.TZ_LOJA || 'America/Sao_Paulo';
+const agoraLoja = (offMs = 0) => {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: TZ_LOJA, hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+    .formatToParts(new Date(Date.now() + offMs)).map(x => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;
+};
 const h = fn => (req, res) => fn(req, res).catch(e => { console.error(e); res.status(500).json({ erro: 'Erro interno' }); });
 
 async function init() {
@@ -51,9 +58,9 @@ async function livres(profId, servId, data) {
   const ocupados = (await q(`SELECT inicio, fim FROM agendamentos
       WHERE profissional_id=$1 AND status='agendado' AND substr(inicio,1,10)=$2`, [profId, data]))
     .map(o => [toMin(o.inicio.slice(11)), toMin(o.fim.slice(11))]);
-  const agora = new Date(), out = [];
+  const agora = agoraLoja(), out = [];
   for (let t = ABRE; t + s.d <= FECHA; t += PASSO) {
-    if (parse(`${data} ${fmt(t)}`) <= agora) continue;
+    if (`${data} ${fmt(t)}` <= agora) continue;
     if (ocupados.some(([i, f]) => t < f && t + s.d > i)) continue;
     out.push(fmt(t));
   }
@@ -154,7 +161,7 @@ app.get('/api/clientes/:id/agendamentos', h(async (req, res) => res.json(await q
   SELECT a.id, a.inicio, a.status, p.nome AS profissional, s.nome AS servico
   FROM agendamentos a JOIN profissionais p ON p.id=a.profissional_id JOIN servicos s ON s.id=a.servico_id
   WHERE a.cliente_id=$1 AND a.status='agendado' AND a.inicio >= $2
-  ORDER BY a.inicio`, [req.params.id, stamp(new Date(Date.now() - 3600e3))]))));
+  ORDER BY a.inicio`, [req.params.id, agoraLoja(-3600e3)]))));
 
 app.delete('/api/agendamentos/:id', h(async (req, res) => {
   const a = await detalhe(req.params.id);
@@ -173,13 +180,22 @@ app.post('/api/espera', h(async (req, res) => {
   res.status(201).json({ ok: true });
 }));
 
-// Painel da barbearia
-app.get('/api/admin/agenda', h(async (req, res) => res.json(await q(`
+// Mensagens do próprio cliente
+app.get('/api/clientes/:id/mensagens', h(async (req, res) => res.json(await q(
+  'SELECT id, tipo, conteudo FROM mensagens WHERE cliente_id=$1 ORDER BY id DESC LIMIT 20', [req.params.id]))));
+
+// Painel da barbearia (/admin.html) — protegido por senha (variável ADMIN_PASSWORD)
+const admin = (req, res, next) => {
+  if (!process.env.ADMIN_PASSWORD) return res.status(503).json({ erro: 'Defina ADMIN_PASSWORD no servidor.' });
+  if (req.get('x-admin-key') !== process.env.ADMIN_PASSWORD) return res.status(401).json({ erro: 'Senha incorreta' });
+  next();
+};
+app.get('/api/admin/agenda', admin, h(async (req, res) => res.json(await q(`
   SELECT a.id, a.inicio, a.fim, c.nome AS cliente, c.telefone, p.nome AS profissional, s.nome AS servico
   FROM agendamentos a JOIN clientes c ON c.id=a.cliente_id JOIN profissionais p ON p.id=a.profissional_id
   JOIN servicos s ON s.id=a.servico_id
   WHERE a.status='agendado' AND substr(a.inicio,1,10)=$1 ORDER BY a.inicio`, [req.query.data]))));
-app.get('/api/admin/mensagens', h(async (_req, res) => res.json(await q(`
+app.get('/api/admin/mensagens', admin, h(async (_req, res) => res.json(await q(`
   SELECT m.id, m.tipo, m.conteudo, c.nome AS cliente FROM mensagens m JOIN clientes c ON c.id=m.cliente_id
   ORDER BY m.id DESC LIMIT 30`))));
 
@@ -189,7 +205,7 @@ let rodando = false;
 setInterval(async () => {
   if (rodando) return; rodando = true;
   try {
-    const agora = Date.now();
+    const agora = parse(agoraLoja());
     for (const { id } of await q("SELECT id FROM agendamentos WHERE status='agendado' AND lembrete_enviado=0")) {
       const a = await detalhe(id), falta = parse(a.inicio) - agora;
       if (falta > 0 && falta <= 2 * 3600e3) {

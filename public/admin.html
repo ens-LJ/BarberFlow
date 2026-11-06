@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BarberFlow — Painel</title>
+<style>
+  body { margin:0; font-family:system-ui,sans-serif; background:#14110f; color:#f3ece4; }
+  main { max-width:760px; margin:0 auto; padding:16px; display:grid; gap:16px; }
+  h1 { color:#d9a441; margin:16px 0 0; text-align:center; }
+  section { background:#1f1b18; border-radius:12px; padding:16px; }
+  h2 { margin:0 0 12px; font-size:1.05rem; }
+  input,button { padding:10px; border-radius:8px; border:1px solid #3a322c; background:#14110f; color:#f3ece4; font:inherit; }
+  button { background:#d9a441; color:#14110f; border:0; font-weight:600; cursor:pointer; }
+  .bar { display:flex; gap:8px; flex-wrap:wrap; }
+  .row { padding:8px 0; border-bottom:1px solid #2c2622; font-size:.9rem; }
+  .hint { color:#a89c90; font-size:.85rem; }
+  #erro { color:#e5645c; }
+</style>
+</head>
+<body>
+<h1>✂ BarberFlow — Painel da barbearia</h1>
+<main>
+  <section>
+    <div class="bar">
+      <input id="senha" type="password" placeholder="Senha do painel">
+      <input id="data" type="date">
+      <button id="entrar">Entrar / atualizar</button>
+    </div>
+    <p id="erro"></p>
+  </section>
+  <section><h2>Agenda do dia</h2><div id="agenda"><span class="hint">Entre com a senha.</span></div></section>
+  <section><h2>Mensagens enviadas (todas)</h2><div id="msgs"></div></section>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const hoje = new Date(); hoje.setMinutes(hoje.getMinutes() - hoje.getTimezoneOffset());
+$('#data').value = hoje.toISOString().slice(0, 10);
+async function get(url) {
+  const r = await fetch(url, { headers: { 'x-admin-key': $('#senha').value } });
+  const j = await r.json(); if (!r.ok) throw new Error(j.erro || 'Erro'); return j;
+}
+async function carregar() {
+  try {
+    $('#erro').textContent = '';
+    const [ag, ms] = await Promise.all([get('/api/admin/agenda?data=' + $('#data').value), get('/api/admin/mensagens')]);
+    $('#agenda').innerHTML = ag.map(a => `<div class="row"><b>${a.inicio.slice(11)}–${a.fim.slice(11)}</b> · ${a.servico} · ${a.profissional}<br><span class="hint">${a.cliente} · ${a.telefone}</span></div>`).join('') || '<span class="hint">Nenhum agendamento neste dia.</span>';
+    $('#msgs').innerHTML = ms.map(m => `<div class="row"><b>${m.tipo}</b> → ${m.cliente}<br><span class="hint">${m.conteudo}</span></div>`).join('') || '<span class="hint">Sem mensagens.</span>';
+  } catch (e) { $('#erro').textContent = e.message; }
+}
+$('#entrar').onclick = carregar;
+setInterval(() => { if ($('#senha').value) carregar(); }, 15000);
+</script>
+</body>
+</html>

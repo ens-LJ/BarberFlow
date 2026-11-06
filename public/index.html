@@ -65,7 +65,7 @@
   </section>
 
   <section><h2>Meus agendamentos</h2><div id="meus"><span class="hint">Salve seu cadastro para ver.</span></div></section>
-  <section><h2>Painel da barbearia — mensagens enviadas</h2><div id="msgs"></div></section>
+  <section><h2>Minhas mensagens</h2><div id="msgs"><span class="hint">Salve seu cadastro para ver.</span></div></section>
 </main>
 
 <script>
@@ -105,7 +105,7 @@ $('#salvar').onclick = async () => {
   try {
     cliente = await api('/api/clientes', { method: 'POST', body });
     localStorage.setItem('bf_cliente', JSON.stringify(cliente));
-    aviso('Cadastro salvo!'); carregarMeus();
+    aviso('Cadastro salvo!'); carregarMeus(); carregarMsgs();
   } catch (e) { aviso(e.message, false); }
 };
 
@@ -162,8 +162,9 @@ async function carregarMeus() {
   });
 }
 async function carregarMsgs() {
-  const l = await api('/api/admin/mensagens');
-  $('#msgs').innerHTML = l.map(m => `<div class="row"><span><b>${m.tipo}</b> → ${m.cliente}<br><span class="hint">${m.conteudo}</span></span></div>`).join('') || '<span class="hint">Sem mensagens.</span>';
+  if (!cliente) return;
+  const l = await api(`/api/clientes/${cliente.id}/mensagens`);
+  $('#msgs').innerHTML = l.map(m => `<div class="row"><span><b>${m.tipo}</b><br><span class="hint">${m.conteudo}</span></span></div>`).join('') || '<span class="hint">Sem mensagens.</span>';
 }
 init();
 setInterval(carregarMsgs, 15000);
